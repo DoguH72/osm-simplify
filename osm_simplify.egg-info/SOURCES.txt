@@ -1,0 +1,7 @@
+main.py
+pyproject.toml
+osm_simplify.egg-info/PKG-INFO
+osm_simplify.egg-info/SOURCES.txt
+osm_simplify.egg-info/dependency_links.txt
+osm_simplify.egg-info/requires.txt
+osm_simplify.egg-info/top_level.txt
