@@ -4,19 +4,40 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "osm-simplify"
-version = "1.0.0"
-description = "A lightweight, dependency-minimal Python library for querying OpenStreetMap data."
+version = "1.0.1"  # Incrementing version for the updated PyPI metadata
+description = "A high-performance, lightweight Python client for querying OpenStreetMap data without heavy GIS dependencies."
 readme = "README.md"
 requires-python = ">=3.8"
 license = { text = "MIT" }
 authors = [
-    { name = "Dogu H." }
+    { name = "Dogu Hatipoglu" }
+]
+keywords = [
+    "openstreetmap",
+    "overpass-api",
+    "gis",
+    "nominatim",
+    "geocoding",
+    "spatial-search",
+    "osm"
 ]
 classifiers = [
-    "Programming Language :: Python :: 3",
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "Topic :: Scientific/Engineering :: GIS",
     "License :: OSI Approved :: MIT License",
-    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
 ]
 dependencies = [
-    "requests>=2.0.0"
+    "requests",
 ]
+
+[project.urls]
+"Homepage" = "https://github.com/DoguH72/osm-simplify"
+"Repository" = "https://github.com/DoguH72/osm-simplify"
+"Bug Tracker" = "https://github.com/DoguH72/osm-simplify/issues"
