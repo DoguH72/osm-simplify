@@ -22,7 +22,7 @@ Working directly with OpenStreetMap's Overpass API or raw binary extracts can be
 
 - **Pure-Python PBF Binary Parser:** Native streaming `.osm.pbf` reader powered purely by standard library `zlib` and `struct`—no C/C++ build chains required.
 
-- **Sub-Millisecond $O(1)$ Spatial Indexing:** Built-in `LocalSpatialIndex` partitions map primitives into ~$1.1\text{ km}$ spatial grid cells on cold start, delivering instant sub-millisecond offline lookups.
+- **Sub-Millisecond $O(1)$ Spatial Indexing:** Built-in `LocalSpatialIndex` partitions map primitives into ~1.1km spatial grid cells on cold start, delivering instant sub-millisecond offline lookups.
 
 - **Smart Dual-Mode Engine:** Query live public Overpass servers with built-in failover, or seamlessly pass a local `.osm` XML or `.osm.pbf` file for offline parsing.
 
@@ -252,7 +252,7 @@ with open("food_spots.geojson", "w", encoding="utf-8") as f:
 
 - **`GeoFinder(lat, lon, location_name=..., local_file=...)`**: Core spatial engine handling online API requests, mirror failovers, and offline PBF/XML spatial indexing.
 
-- **`LocalSpatialIndex`**: In-memory spatial hash grid storing POI candidates inside ~$1.1\text{ km}$ bounding cells for instant $O(1)$ candidate lookups.
+- **`LocalSpatialIndex`**: In-memory spatial hash grid storing POI candidates inside ~1.1km bounding cells for instant $O(1)$ candidate lookups.
 
 - **`Place`**: Clean dataclass representing a found location (`.name`, `.category`, `.subtype`, `.lat`, `.lon`, `.distance_m`, `.raw_tags`, `.to_dict()`, `.to_geojson_feature()`).
 
