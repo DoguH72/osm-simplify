@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "osm-simplify"
-version = "1.0.1"  # Incrementing version for the updated PyPI metadata
-description = "A high-performance, lightweight Python client for querying OpenStreetMap data without heavy GIS dependencies."
+version = "1.1.0"
+description = "Lightweight, zero-dependency offline PBF spatial grid index and OSM search library."
 readme = "README.md"
 requires-python = ">=3.8"
 license = { text = "MIT" }
