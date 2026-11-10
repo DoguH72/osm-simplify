@@ -1,51 +1,11 @@
 import math
 import time
 import requests
-import xml.etree.ElementTree as ET
-from dataclasses import dataclass, asdict
-from typing import Optional
+from typing import Optional, Union, Dict
 
-class OverpassServerError(Exception):
-    """Raised when all Overpass API mirrors fail or are overloaded."""
-    pass
-
-@dataclass
-class Place:
-    name: str
-    category: str
-    subtype: str
-    lat: float
-    lon: float
-    distance_m: int
-
-    def to_dict(self) -> dict:
-        return asdict(self)
-
-    def __repr__(self):
-        return f"<{self.name} [{self.category}:{self.subtype}] - {self.distance_m}m away>"
-
-class Category:
-    MONUMENT = {
-        "name": "monument",
-        "overpass": (
-            '["historic"~"monument|memorial|statue"]',
-            '["tourism"="artwork"]',
-            '["man_made"="obelisk"]',
-        ),
-    }
-    PARK = {
-        "name": "park",
-        "overpass": (
-            '["leisure"~"park|garden|playground|dog_park"]',
-            '["landuse"~"recreation_ground|village_green"]',
-        ),
-    }
-    FOOD = {
-        "name": "food",
-        "overpass": (
-            '["amenity"~"restaurant|cafe|bar|pub|fast_food|food_court|ice_cream"]',
-        ),
-    }
+from osm_simplify.models import Place, PlaceList, OverpassServerError
+from osm_simplify.index import LocalSpatialIndex
+from osm_simplify.pbf import load_local_file_to_index
 
 class GeoFinder:
     USER_AGENT = 'SimpleOSMBot/1.0 (https://github.com/DoguH72/osm-simplify)'
@@ -63,12 +23,20 @@ class GeoFinder:
     _query_cache = {}
     _last_overpass = 0.0
     _last_nominatim = 0.0
+    _file_index_cache: Dict[str, LocalSpatialIndex] = {}
 
     def __init__(self, lat: float, lon: float, location_name: str = "Custom Coordinates", local_file: Optional[str] = None):
         self.lat = lat
         self.lon = lon
         self.location_name = location_name
-        self.local_file = local_file  # Path to local .osm XML file if available
+        self.local_file = local_file
+        
+        # Load and index local file ONCE at initialization
+        self.spatial_index: Optional[LocalSpatialIndex] = None
+        if self.local_file:
+            if self.local_file not in self._file_index_cache:
+                self._file_index_cache[self.local_file] = load_local_file_to_index(self.local_file)
+            self.spatial_index = self._file_index_cache[self.local_file]
 
     @classmethod
     def _rate_limit_nominatim(cls):
@@ -86,12 +54,10 @@ class GeoFinder:
 
     @classmethod
     def from_address(cls, address: str, city: str, country: Optional[str] = None, local_file: Optional[str] = None):
-        # Dynamically build search query whether country is provided or not
         query_parts = [address.strip(), city.strip()]
         if country:
             query_parts.append(country.strip())
         query = ", ".join(query_parts)
-
         headers = {'User-Agent': cls.USER_AGENT, 'Accept': 'application/json'}
 
         cls._rate_limit_nominatim()
@@ -138,132 +104,42 @@ class GeoFinder:
                 return tags[key]
         return "general"
 
-    def _parse_local_osm(self, category_config: dict, radius_m: int) -> list[Place]:
-        """Parses a local .osm XML file offline for both node points and way polygons."""
-        if not self.local_file:
-            return []
-
-        tree = ET.parse(self.local_file)
-        root = tree.getroot()
-        places = []
-
-        # Index node coordinates for calculating way centroids
-        node_coords = {}
-        for node in root.findall("node"):
-            node_id = node.attrib['id']
-            node_coords[node_id] = (float(node.attrib['lat']), float(node.attrib['lon']))
-
-        category_name = category_config["name"]
-        category_tags = category_config["overpass"]
-        if isinstance(category_tags, str):
-            category_tags = (category_tags,)
-
-        # Build matching rules from Category selectors
-        match_rules = []
-        for raw_tag in category_tags:
-            clean = raw_tag.strip(' []"\'')
-            if '~' in clean:
-                k, v_str = clean.split('~', 1)
-                allowed_vals = set(v_str.strip('[]"\'').split('|'))
-                match_rules.append((k.strip('[]"\''), allowed_vals, True))  # Regex match
-            elif '=' in clean:
-                k, v = clean.split('=', 1)
-                match_rules.append((k.strip('[]"\''), {v.strip('[]"\'')}, False))  # Exact match
-
-        def check_tags(tags: dict) -> bool:
-            for key, allowed_vals, is_regex in match_rules:
-                if key in tags:
-                    val = tags[key]
-                    if is_regex and any(v in val for v in allowed_vals):
-                        return True
-                    elif not is_regex and val in allowed_vals:
-                        return True
-            return False
-
-        # 1. Parse standalone <node> elements
-        for node in root.findall("node"):
-            tags = {tag.attrib['k']: tag.attrib['v'] for tag in node.findall("tag")}
-            if not tags or not check_tags(tags):
-                continue
-
-            e_lat, e_lon = float(node.attrib['lat']), float(node.attrib['lon'])
-            dist = round(self._haversine(e_lat, e_lon))
-
-            if dist <= radius_m:
-                subtype = self._extract_subtype(tags)
-                raw_name = tags.get("name") or tags.get("brand") or tags.get("operator") or f"Unnamed {subtype.capitalize()}"
-                places.append(Place(
-                    name=raw_name,
-                    category=category_name,
-                    subtype=subtype,
-                    lat=e_lat,
-                    lon=e_lon,
-                    distance_m=dist
-                ))
-
-        # 2. Parse building/area <way> elements
-        for way in root.findall("way"):
-            tags = {tag.attrib['k']: tag.attrib['v'] for tag in way.findall("tag")}
-            if not tags or not check_tags(tags):
-                continue
-
-            way_lats, way_lons = [], []
-            for nd in way.findall("nd"):
-                ref = nd.attrib.get("ref")
-                if ref in node_coords:
-                    lat, lon = node_coords[ref]
-                    way_lats.append(lat)
-                    way_lons.append(lon)
-
-            if not way_lats:
-                continue
-
-            e_lat = sum(way_lats) / len(way_lats)
-            e_lon = sum(way_lons) / len(way_lons)
-            dist = round(self._haversine(e_lat, e_lon))
-
-            if dist <= radius_m:
-                subtype = self._extract_subtype(tags)
-                raw_name = tags.get("name") or tags.get("brand") or tags.get("operator") or f"Unnamed {subtype.capitalize()}"
-                places.append(Place(
-                    name=raw_name,
-                    category=category_name,
-                    subtype=subtype,
-                    lat=e_lat,
-                    lon=e_lon,
-                    distance_m=dist
-                ))
-
-        places.sort(key=lambda p: p.distance_m)
-        return places
-
-    def get_nearby(self, category_config: dict, radius_m: int = 1000, raise_on_error: bool = False) -> list[Place]:
+    def get_nearby(
+        self, 
+        category_config: Union[dict, str], 
+        radius_m: int = 1000, 
+        tags: Optional[Dict[str, str]] = None,
+        raise_on_error: bool = False
+    ) -> PlaceList:
         if radius_m > self.MAX_RADIUS_M:
-            print(f"[Warning] Requested radius {radius_m}m exceeds {self.MAX_RADIUS_M}m limit. Clamping to {self.MAX_RADIUS_M}m.")
             radius_m = self.MAX_RADIUS_M
 
-        category_name = category_config["name"]
+        category_name = category_config["name"] if isinstance(category_config, dict) else category_config
         cache_key = (round(self.lat, 4), round(self.lon, 4), category_name, radius_m)
 
-        # 1. Check LRU Cache FIRST
         if cache_key in self._query_cache:
             return self._query_cache[cache_key]
 
-        # 2. Offline local mode check
-        if self.local_file:
-            print(f"[Info] Reading from local file: {self.local_file}")
-            places = self._parse_local_osm(category_config, radius_m)
-            self._query_cache[cache_key] = places
-            return places
+        # fast O(1) offline spatial index lookup
+        if self.spatial_index:
+            results = self.spatial_index.query_nearby(
+                center_lat=self.lat,
+                center_lon=self.lon,
+                radius_m=radius_m,
+                category_name=category_name,
+                custom_tags=tags
+            )
+            self._query_cache[cache_key] = results
+            return results
 
-        category_tags = category_config["overpass"]
+        #online overpass request handling
+        category_tags = category_config["overpass"] if isinstance(category_config, dict) else (f'["{category_config}"]',)
         if isinstance(category_tags, str):
             category_tags = (category_tags,)
 
         lat_clean = round(self.lat, 5)
         lon_clean = round(self.lon, 5)
 
-        # Construct query lines for online Overpass mirrors
         union_lines = []
         for tag in category_tags:
             clean_tag = tag.strip().rstrip(';')
@@ -281,51 +157,31 @@ class GeoFinder:
         }
 
         payload = None
-        server_errors = []
-
-        # 3. Iterate through online endpoints
         for url in self.OVERPASS_ENDPOINTS:
             self._rate_limit_overpass()
             try:
-                resp = requests.post(
-                    url, 
-                    data={'data': overpass_query}, 
-                    headers=post_headers, 
-                    timeout=self.HTTP_TIMEOUT
-                )
+                resp = requests.post(url, data={'data': overpass_query}, headers=post_headers, timeout=self.HTTP_TIMEOUT)
                 if resp.status_code == 200:
-                    try:
-                        data = resp.json()
-                        if "elements" in data:
-                            payload = data
-                            break
-                    except ValueError:
-                        server_errors.append(f"{url}: HTML 200 response (busy/throttled)")
-                else:
-                    server_errors.append(f"{url}: HTTP {resp.status_code}")
-            except Exception as e:
-                server_errors.append(f"{url}: {type(e).__name__}")
+                    data = resp.json()
+                    if "elements" in data:
+                        payload = data
+                        break
+            except Exception:
+                pass
 
         if not payload:
-            err_msg = f"[API Error] All Overpass servers failed or are busy. Server logs: {server_errors}"
-            print(err_msg)
             if raise_on_error:
-                raise OverpassServerError("All public Overpass servers are currently busy or down. Please try again in a few moments.")
-            return []
+                raise OverpassServerError("All public Overpass servers are currently busy or down.")
+            return PlaceList()
 
-        places = []
+        places = PlaceList()
         for elem in payload.get("elements", []):
-            tags = elem.get("tags", {})
-            subtype = self._extract_subtype(tags)
-            raw_name = tags.get("name") or tags.get("brand") or tags.get("operator") or f"Unnamed {subtype.capitalize()}"
+            elem_tags = elem.get("tags", {})
+            subtype = self._extract_subtype(elem_tags)
+            raw_name = elem_tags.get("name") or elem_tags.get("brand") or elem_tags.get("operator") or f"Unnamed {subtype.capitalize()}"
 
-            e_lat = elem.get("lat")
-            e_lon = elem.get("lon")
-            if e_lat is None or e_lon is None:
-                center = elem.get("center")
-                if isinstance(center, dict):
-                    e_lat = center.get("lat")
-                    e_lon = center.get("lon")
+            e_lat = elem.get("lat") or (elem.get("center", {}).get("lat") if isinstance(elem.get("center"), dict) else None)
+            e_lon = elem.get("lon") or (elem.get("center", {}).get("lon") if isinstance(elem.get("center"), dict) else None)
 
             if e_lat is not None and e_lon is not None:
                 places.append(Place(
@@ -334,18 +190,15 @@ class GeoFinder:
                     subtype=subtype,
                     lat=e_lat,
                     lon=e_lon,
-                    distance_m=round(self._haversine(e_lat, e_lon))
+                    distance_m=round(self._haversine(e_lat, e_lon)),
+                    raw_tags=elem_tags
                 ))
 
         places.sort(key=lambda p: p.distance_m)
-
         if places:
             self._query_cache[cache_key] = places
-            if len(self._query_cache) > self.CACHE_MAX_SIZE:
-                del self._query_cache[next(iter(self._query_cache))]
-
         return places
 
-    def get_closest(self, category_config: dict, radius_m: int = 1000):
+    def get_closest(self, category_config: dict, radius_m: int = 1000) -> Optional[Place]:
         results = self.get_nearby(category_config, radius_m=radius_m)
         return results[0] if results else None
